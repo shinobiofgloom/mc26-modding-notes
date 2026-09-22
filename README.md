@@ -344,3 +344,7 @@ running server before it was written down.
 
 Corrections welcome — if something here is wrong, it cost somebody a day, and
 that is worth fixing.
+
+One of those mods is public: [Server Leaderboards](https://github.com/shinobiofgloom/server-leaderboards),
+which is where the "server-side mods cannot use language files" entry above
+came from.
