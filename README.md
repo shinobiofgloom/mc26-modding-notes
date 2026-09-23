@@ -316,6 +316,115 @@ player.sendSystemMessage(Component.literal(text));
 Slightly more work than a language file, and you carry the strings in code —
 but it is the only way a server-side mod speaks more than one language.
 
+## Renamed and moved in 26.2 — the ones that stop a build
+
+Found while writing a mod that draws its own HUD. Every one of these shows up
+as `cannot find symbol`, and none of them is in a wiki yet.
+
+| Before | In 26.2 |
+|---|---|
+| `BlockEvent.BreakEvent` | `event.level.block.BreakBlockEvent` |
+| `PickaxeItem`, `SwordItem` | **gone** — tools are data-driven now |
+| `GuiGraphics` in `RenderGuiLayerEvent` | `GuiGraphicsExtractor` (it *is* the drawing surface) |
+| `GuiGraphics.drawString(...)` | `.text(...)`, plus `.centeredText(...)` |
+| `FMLEnvironment.dist` | `FMLEnvironment.getDist()` |
+| `entity.projectile.AbstractArrow` | `entity.projectile.arrow.AbstractArrow` |
+| `CommandSourceStack.hasPermission(2)` | `Commands.hasPermission(new PermissionCheck.Require(Permissions.COMMANDS_GAMEMASTER))` |
+| `AbstractArrow.getBaseDamage()` | gone — only the setter is left |
+
+**`ShovelItem`, `AxeItem` and `BowItem` still exist** — only pickaxe and sword
+disappeared. Code that mixes the survivors with a workaround for the missing
+two breaks again at the next change. Use item tags instead:
+`ItemTags.PICKAXES`, `SHOVELS`, `AXES`, `SWORDS`. They catch tools from other
+mods for free. There is no bow tag; `BOW_ENCHANTABLE` is something else and
+includes the crossbow.
+
+`GuiGraphicsExtractor` is a Minecraft class, not a NeoForge one
+(`net.minecraft.client.gui`). The permission pattern comes straight from
+vanilla's `GameModeCommand`.
+
+## A client-only handler must never be named on the server
+
+```java
+PayloadRegistrar registrar = event.registrar("1");
+if (FMLEnvironment.getDist().isClient()) {
+    ClientNetwork.register(registrar);         // with a handler
+} else {
+    registrar.playToClient(TYPE, CODEC);       // without one
+}
+```
+
+Writing `ClientDisplay::receive` directly in the registration makes Java load
+that class **when registering** — on a dedicated server too, which has no
+screen classes. The result is a `NoClassDefFoundError` at startup, on exactly
+the machine you never test from your IDE. The `playToClient` overload without a
+handler exists for this.
+
+What is verified here: a dedicated server starts cleanly with this split. The
+failure itself was not reproduced — the split was built in from the start.
+
+## Network channels are an entry ticket
+
+From NeoForge's own `PayloadRegistrar.optional()`:
+
+> If any non-optional payloads are missing during a connection attempt, the
+> connection will fail.
+
+Every `playToClient(...)` is mandatory by default. Put such a mod on a server
+and every player without it is locked out. (Quoted from the source; not yet
+observed with a real client.) Right for a mod that needs a client part
+anyway; worth knowing before you drop the jar on a live server. Call
+`registrar.optional()` first if the mod should tolerate vanilla clients.
+
+## `Level.destroyBlock` drops as if no tool was used
+
+An ability that breaks extra blocks — a vein, a tree — is tempting to write
+with `level.destroyBlock(pos, true, player)`. It looks right and it drops
+items. But from `Level.java`:
+
+```java
+Block.dropResources(blockState, this, pos, blockEntity, breaker, ItemStack.EMPTY);
+```
+
+The tool is **`ItemStack.EMPTY`**. Fortune and Silk Touch do nothing, and ores
+give no experience. A vein ability built like this gives a Fortune III player
+*fewer* diamonds than mining by hand. It also does not fire `BreakBlockEvent`,
+and does not wear the tool down.
+
+What a left click does is `player.gameMode.destroyBlock(pos)`: real drops with
+the tool's enchantments, experience, durability, statistics, spawn protection
+— and it **fires `BreakBlockEvent`** (`CommonHooks.fireBlockBreak` in
+`ServerPlayerGameMode`). So if the ability itself listens to that event, it
+starts again for every block it breaks. Guard it:
+
+```java
+private static final ThreadLocal<Boolean> ACTIVE = ThreadLocal.withInitial(() -> false);
+```
+
+A `ThreadLocal`, not a static flag: a server may tick dimensions on separate
+threads, and a shared flag would let one player's ability silence another's.
+
+Measured with a fake player (`FakePlayerFactory`) on a test server: a
+27-block diamond vein broken through `gameMode.destroyBlock` with a Fortune III
+pickaxe gave **57 diamonds** (expected mean 59; without Fortune it would be
+27).
+
+**Leaves cost durability too** when mined through the game mode:
+`Item.mineBlock` damages the tool for every block whose hardness is not 0, and
+leaves have 0.2. A tree-felling ability that mines leaves wears the axe down by
+sixty points on a big oak. Breaking leaves with `level.destroyBlock` instead
+lets them fall like natural decay — saplings and apples, no durability.
+
+## Saved data lives per namespace
+
+World data is at
+`world/dimensions/minecraft/overworld/data/<modid>/<name>.dat`. Changing the
+mod id means a new folder and the old data is simply not read any more. When
+renaming, **stop** the server rather than restarting it: the old mod writes
+its file on shutdown, so a file moved away while it runs comes straight back.
+
+---
+
 ## Odds and ends
 
 * **`forceload add` takes effect next tick.** Placing something right after it
@@ -338,7 +447,7 @@ but it is the only way a server-side mod speaks more than one language.
 ## Where this comes from
 
 A private server for two people, running Minecraft 26.2 on NeoForge with
-self-built mods. Everything here was hit in practice between 17 and 22
+self-built mods. Everything here was hit in practice between 17 and 23
 September 2026, and every claim was verified against decompiled source or a
 running server before it was written down.
 
