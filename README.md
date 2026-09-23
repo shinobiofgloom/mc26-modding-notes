@@ -420,8 +420,12 @@ lets them fall like natural decay — saplings and apples, no durability.
 World data is at
 `world/dimensions/minecraft/overworld/data/<modid>/<name>.dat`. Changing the
 mod id means a new folder and the old data is simply not read any more. When
-renaming, **stop** the server rather than restarting it: the old mod writes
-its file on shutdown, so a file moved away while it runs comes straight back.
+renaming, stop the server before moving the old folder away — saved data is
+written on shutdown, so the old mod may write its file again while it still
+runs. (That is why I stopped first; I did not test the other order.)
+
+The path itself is observed: for the mod id `toolmastery` the file was at
+`.../overworld/data/toolmastery/stufen.dat`.
 
 ---
 
